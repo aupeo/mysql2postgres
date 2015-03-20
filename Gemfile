@@ -11,7 +11,7 @@ platforms :jruby do
   gem 'activerecord-jdbcpostgresql-adapter'
 end
 
-platforms :mri_19 do
+platforms :mri do
   gem 'pg', '~> 0.17'
 end
 
