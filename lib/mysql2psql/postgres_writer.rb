@@ -74,14 +74,11 @@ class Mysql2psql
         'time without time zone'
 
       when 'tinyblob'
-        'bytea'
       when 'mediumblob'
-        'bytea'
       when 'longblob'
-        'bytea'
       when 'blob'
-        'bytea'
       when 'varbinary'
+      when /^binary/
         'bytea'
       when 'tinytext'
         'text'
@@ -124,7 +121,7 @@ class Mysql2psql
 
         if row[index].is_a?(String)
           if column_type(column) == 'bytea'
-            row[index] = PGconn.escape_bytea(row[index])
+            row[index] = PGconn.escape_bytea(row[index]).gsub('\\', '\\\\\\')
           else
             row[index] = row[index].gsub(/\\/, '\\\\\\').gsub(/\n/, '\n').gsub(/\t/, '\t').gsub(/\r/, '\r').gsub(/\0/, '')
           end
