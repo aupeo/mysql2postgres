@@ -27,12 +27,15 @@ class Mysql2psql
 
         @only_tables.each do |only_table|
           idx = tables.index { |table| table.name == only_table }
-          reordered_tables << tables[idx]
+          puts "idx #{idx} for #{only_table}"
+          reordered_tables << tables[idx] if idx
         end
 
         tables = reordered_tables
 
       end
+
+      puts "tables for conversion: #{tables.map(&:name).inspect}"
 
       tables.each do |table|
         writer.write_table(table)

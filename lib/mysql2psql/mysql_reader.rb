@@ -222,33 +222,28 @@ class Mysql2psql
     attr_reader :mysql
 
     def tables
-      list_tables = @mysql.query("show tables") #.map(&:first)
-      #puts "list_tables #{list_tables.inspect}"
-      list_tables = list_tables.map(&:first)
-      #puts "list_tables 222 #{list_tables.inspect}"
-      list_tables = list_tables.map(&:last)
-      puts "list_tables = #{list_tables.inspect}"
-      @tables ||= list_tables.map { |table| Table.new(self, table) }
+      unless @tables
+        @tables = [] 
+        query("show tables").each do |row|        
+          #puts "list_tables #{row.first.last}"
+          name = row.first.last
+          @tables << Table.new(self, name)
+        end
+      end
+      @tables 
     end
 
     def paginated_read(table, page_size)
       count = table.count_for_pager
       return if count < 1
-      # statement = @mysql.prepare(table.query_for_pager)
       statement = table.query_for_pager
       puts "paginated_read #{table.query_for_pager}"
       counter = 0
       0.upto((count + page_size) / page_size) do |i|
         v1 = i * page_size
         v2 = (table.has_id? ? (i + 1) * page_size : page_size)
-        puts "paginated_read     #{statement} ++++ #{v1} , #{v2}"
         sql = statement.sub('?',v1.to_s).sub('?',v2.to_s)
         puts "paginated_read SQL #{sql}"
-        #statement.execute(i * page_size, table.has_id? ? (i + 1) * page_size : page_size)
-        # while row = statement.fetch
-        #   counter += 1
-        #   yield(row, counter)
-        # end
         res = @mysql.query(sql)
         res.each do |row|
           counter += 1
