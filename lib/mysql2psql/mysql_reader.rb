@@ -1,7 +1,8 @@
 require 'rubygems'
 require 'bundler/setup'
 
-require 'mysql-pr'
+require 'mysql2'
+#require 'mysql-pr'
 require 'csv'
 
 class Mysql2psql
@@ -17,11 +18,11 @@ class Mysql2psql
         @name = name
       end
 
-      @@types = %w(tiny enum decimal short long float double null timestamp longlong int24 date time datetime year set blob string var_string char).reduce({}) do |list, type|
-        list[eval("::MysqlPR::Field::TYPE_#{type.upcase}")] = type
-        list
-      end
-      @@types[246] = 'decimal'
+      # @@types = %w(tiny enum decimal short long float double null timestamp longlong int24 date time datetime year set blob string var_string char).reduce({}) do |list, type|
+      #   list[eval("::MysqlPR::Field::TYPE_#{type.upcase}")] = type
+      #   list
+      # end
+      # @@types[246] = 'decimal'
 
       def columns
         @columns ||= load_columns
@@ -56,13 +57,19 @@ class Mysql2psql
         end
       end
 
-      def load_columns
-        @reader.reconnect
+      def list_fields
         result = @reader.mysql.list_fields(name)
         mysql_flags = ::MysqlPR::Field.constants.select { |c| c =~ /FLAG/ }
+      end
+
+      def load_columns
+        @reader.reconnect
+        # result = @reader.mysql.list_fields(name)
+        # mysql_flags = ::MysqlPR::Field.constants.select { |c| c =~ /FLAG/ }
         fields = []
-        @reader.query("EXPLAIN `#{name}`") do |res|
-          while field = res.fetch_row
+        res = @reader.query("EXPLAIN `#{name}`") 
+        res.each do |field|
+            puts "load_columns fields: #{field.inspect}"
             length = field[1][/\((\d+)\)/, 1] if field[1] =~ /\((\d+)\)/
             length = field[1][/\((\d+),(\d+)\)/, 1] if field[1] =~ /\((\d+),(\d+)\)/
             desc = {
@@ -76,14 +83,12 @@ class Mysql2psql
               auto_increment: field[5] == 'auto_increment'
             }
             desc[:default] = field[4] unless field[4].nil?
+            puts "field: #{desc.inspect}"
             fields << desc
-          end
-        end
+        end        
 
         fields.select { |field| field[:auto_increment] }.each do |field|
-          @reader.query("SELECT max(`#{field[:name]}`) FROM `#{name}`") do |res|
-            field[:maxval] = res.fetch_row[0].to_i
-          end
+          field[:maxval] = @reader.query("SELECT max(`#{field[:name]}`) FROM `#{name}`").first.first.to_i                       
         end
         fields
       end
@@ -101,8 +106,10 @@ class Mysql2psql
         @indexes = []
         @foreign_keys = []
 
-        @reader.query("SHOW CREATE TABLE `#{name}`") do |result|
-          explain = result.fetch_row[1]
+        result = @reader.query("SHOW CREATE TABLE `#{name}`")
+        result.each do |row|
+          explain = row[1]
+
           explain.split(/\n/).each do |line|
             next unless line =~ / KEY /
             index = {}
@@ -142,9 +149,7 @@ class Mysql2psql
       end
 
       def count_rows
-        @reader.query("SELECT COUNT(*) FROM `#{name}`")  do |res|
-          return res.fetch_row[0].to_i
-        end
+        @reader.query("SELECT COUNT(*) FROM `#{name}`").first.first.to_i
       end
 
       def has_id?
@@ -153,9 +158,7 @@ class Mysql2psql
 
       def count_for_pager
         query = has_id? ? 'MAX(id)' : 'COUNT(*)'
-        @reader.query("SELECT #{query} FROM `#{name}`") do |res|
-          return res.fetch_row[0].to_i
-        end
+        res =@reader.query("SELECT #{query} FROM `#{name}`").first.first.to_i
       end
 
       def query_for_pager
@@ -174,10 +177,14 @@ class Mysql2psql
     end
 
     def connect
-      @mysql = ::MysqlPR.connect(@host, @user, @passwd, @db, @port, @sock)
-      @mysql.charset = ::MysqlPR::Charset.by_number 192 # utf8_unicode_ci :: http://rubydoc.info/gems/mysql-pr/MysqlPR/Charset
+      # @mysql = ::MysqlPR.connect(@host, @user, @passwd, @db, @port, @sock)
+      # @mysql.charset = ::MysqlPR::Charset.by_number 192 # utf8_unicode_ci :: http://rubydoc.info/gems/mysql-pr/MysqlPR/Charset
+
+      puts "Mysql2::Client #{@mysql_options.inspect}"
+      @mysql = Mysql2::Client.new( @mysql_options )
+      Mysql2::Client.default_query_options.merge!(:as => :array)
       @mysql.query('SET NAMES utf8')
-      @mysql.query('SET SESSION query_cache_type = OFF')
+      #@mysql.query('SET SESSION query_cache_type = OFF')
     end
 
     def reconnect
@@ -185,9 +192,11 @@ class Mysql2psql
       connect
     end
 
-    def query(*args, &block)
-      self.mysql.query(*args, &block)
-    rescue Mysql::Error => e
+    def query(*args)
+      result = self.mysql.query(*args)
+      puts "MySQL Query: #{args.inspect} ===> #{result.fields.inspect}"
+      result
+    rescue Mysql2::Error => e
       if e.message =~ /gone away/i
         self.reconnect
         retry
@@ -199,6 +208,7 @@ class Mysql2psql
     end
 
     def initialize(options)
+      @mysql_options = options.config['mysql']
       @host, @user, @passwd, @db, @port, @sock, @flag =
         options.mysqlhost('localhost'), options.mysqlusername,
         options.mysqlpassword, options.mysqldatabase,
@@ -212,17 +222,35 @@ class Mysql2psql
     attr_reader :mysql
 
     def tables
-      @tables ||= @mysql.list_tables.map { |table| Table.new(self, table) }
+      list_tables = @mysql.query("show tables") #.map(&:first)
+      #puts "list_tables #{list_tables.inspect}"
+      list_tables = list_tables.map(&:first)
+      #puts "list_tables 222 #{list_tables.inspect}"
+      list_tables = list_tables.map(&:last)
+      puts "list_tables = #{list_tables.inspect}"
+      @tables ||= list_tables.map { |table| Table.new(self, table) }
     end
 
     def paginated_read(table, page_size)
       count = table.count_for_pager
       return if count < 1
-      statement = @mysql.prepare(table.query_for_pager)
+      # statement = @mysql.prepare(table.query_for_pager)
+      statement = table.query_for_pager
+      puts "paginated_read #{table.query_for_pager}"
       counter = 0
       0.upto((count + page_size) / page_size) do |i|
-        statement.execute(i * page_size, table.has_id? ? (i + 1) * page_size : page_size)
-        while row = statement.fetch
+        v1 = i * page_size
+        v2 = (table.has_id? ? (i + 1) * page_size : page_size)
+        puts "paginated_read     #{statement} ++++ #{v1} , #{v2}"
+        sql = statement.sub('?',v1.to_s).sub('?',v2.to_s)
+        puts "paginated_read SQL #{sql}"
+        #statement.execute(i * page_size, table.has_id? ? (i + 1) * page_size : page_size)
+        # while row = statement.fetch
+        #   counter += 1
+        #   yield(row, counter)
+        # end
+        res = @mysql.query(sql)
+        res.each do |row|
           counter += 1
           yield(row, counter)
         end

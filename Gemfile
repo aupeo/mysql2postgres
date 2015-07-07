@@ -1,7 +1,7 @@
 source 'https://rubygems.org'
 
 gem 'rake', '~> 10.3'
-gem 'mysql-pr', '~> 2.9'
+#gem 'mysql-pr', '~> 2.9'
 gem 'postgres-pr', '~> 0.6'
 
 platforms :jruby do
@@ -13,6 +13,7 @@ end
 
 platforms :mri do
   gem 'pg', '~> 0.17'
+	gem 'mysql2'
 end
 
 gem 'test-unit'
